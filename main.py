@@ -120,7 +120,9 @@ root.geometry("650x500")
 notebook = ttk.Notebook(root)
 notebook.pack(expand=True, fill="both")
 
-# ---------- TAB 3: ALL PRODUCTS ----------
+
+
+# ---------- TAB 1: ALL PRODUCTS ----------
 tab_all = ttk.Frame(notebook)
 notebook.add(tab_all, text="ყველა პროდუქტი")
 
@@ -131,7 +133,7 @@ listbox.pack(pady=10)
 show_all_products()
 
 
-# ---------- TAB 1: ADD PRODUCT ----------
+# ---------- TAB 2: ADD PRODUCT ----------
 tab_add = ttk.Frame(notebook)
 notebook.add(tab_add, text="პროდუქტის დამატება")
 
@@ -153,7 +155,7 @@ entry_quantity.pack()
 
 ttk.Button(tab_add, text="დამატება", command=add_product).pack(pady=10)
 
-# ---------- TAB 2: SEARCH BY ID ----------
+# ---------- TAB 3: SEARCH BY ID ----------
 tab_search = ttk.Frame(notebook)
 notebook.add(tab_search, text="პროდუქტის ნახვა ID-ით")
 

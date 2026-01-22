@@ -14,6 +14,17 @@ def create_database():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sales (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        quantity INTEGER NOT NULL,
+        total_price REAL NOT NULL,
+        sale_date TEXT NOT NULL,
+        FOREIGN KEY(product_id) REFERENCES products(id)
+    )
+    """)
+
     conn.commit()
     conn.close()
 
