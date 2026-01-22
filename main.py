@@ -2,6 +2,7 @@ import sqlite3
 import tkinter as tk
 from tkinter import ttk, messagebox
 from db import create_database
+from datetime import datetime
 
 # ---------- DATABASE ----------
 def connect_db():
@@ -95,6 +96,53 @@ def show_all_products():
 
     conn.close()
 
+def sell_product():
+    product_id = entry_sell_id.get()
+    sell_qty = entry_sell_qty.get()
+
+    if product_id == "" or sell_qty == "":
+        messagebox.showerror("შეცდომა", "შეავსე ყველა ველი")
+        return
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT price, quantity FROM products WHERE id = ?", (product_id,))
+    product = cursor.fetchone()
+
+    if not product:
+        messagebox.showerror("შეცდომა", "პროდუქტი არ მოიძებნა")
+        conn.close()
+        return
+
+    price, available_qty = product
+    sell_qty = int(sell_qty)
+
+    if sell_qty > available_qty:
+        messagebox.showerror("შეცდომა", "არ არის საკმარისი რაოდენობა")
+        conn.close()
+        return
+
+    total_price = price * sell_qty
+    sale_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 1) products quantity update
+    cursor.execute(
+        "UPDATE products SET quantity = quantity - ? WHERE id = ?",
+        (sell_qty, product_id)
+    )
+
+    # 2) add to sales table
+    cursor.execute(
+        "INSERT INTO sales (product_id, quantity, total_price, sale_date) VALUES (?, ?, ?, ?)",
+        (product_id, sell_qty, total_price, sale_date)
+    )
+
+    conn.commit()
+    conn.close()
+
+    messagebox.showinfo("წარმატება", f"გაყიდვა შესრულდა: {total_price} ₾")
+    show_all_products()  # სია ავტომატურად განახლდება
 
 
 # def show_all_products():
@@ -168,6 +216,19 @@ ttk.Button(tab_search, text="ძებნა", command=get_product_by_id).pack(p
 text_result = tk.Text(tab_search, height=8, width=50)
 text_result.pack(pady=10)
 
+# ---------- TAB 4: SELL PRODUCT ----------
+tab_sell = ttk.Frame(notebook)
+notebook.add(tab_sell, text="გაყიდვა")
+
+ttk.Label(tab_sell, text="პროდუქტის ID").pack(pady=2)
+entry_sell_id = ttk.Entry(tab_sell)
+entry_sell_id.pack()
+
+ttk.Label(tab_sell, text="რაოდენობა").pack(pady=2)
+entry_sell_qty = ttk.Entry(tab_sell)
+entry_sell_qty.pack()
+
+ttk.Button(tab_sell, text="გაყიდვა", command=sell_product).pack(pady=10)
 
 
 root.mainloop()
