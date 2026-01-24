@@ -1,234 +1,592 @@
-import sqlite3
 import tkinter as tk
 from tkinter import ttk, messagebox
-from db import create_database
+import sqlite3
 from datetime import datetime
 
-# ---------- DATABASE ----------
+# ---------------- DATABASE ----------------
 def connect_db():
     return sqlite3.connect("supermarket.db")
 
-
-create_database()
-
-# ---------- FUNCTIONS ----------
-def add_product():
-    name = entry_name.get()
-    category = entry_category.get()
-    price = entry_price.get()
-    quantity = entry_quantity.get()
-
-    if name == "" or price == "" or quantity == "":
-        messagebox.showerror("შეცდომა", "შეავსე ყველა აუცილებელი ველი")
-        return
-
+def create_tables():
     conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO products (name, category, price, quantity) VALUES (?, ?, ?, ?)",
-        (name, category, float(price), int(quantity))
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        price REAL,
+        quantity INTEGER
     )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS sales (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER,
+        quantity INTEGER,
+        total REAL,
+        date TEXT
+    )
+    """)
+
     conn.commit()
     conn.close()
 
-    messagebox.showinfo("წარმატება", "პროდუქტი დაემატა")
+create_tables()
 
-    entry_name.delete(0, tk.END)
-    entry_category.delete(0, tk.END)
-    entry_price.delete(0, tk.END)
-    entry_quantity.delete(0, tk.END)
+# ---------------- CART ----------------
+cart = []
 
-def get_product_by_id():
-    product_id = entry_search_id.get()
+def add_to_cart():
+    pid = entry_sell_id.get()
+    qty = entry_sell_qty.get()
 
-    if product_id == "":
-        messagebox.showerror("შეცდომა", "შეიყვანე ID")
-        return
-
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM products WHERE id = ?", (product_id,))
-    result = cursor.fetchone()
-    conn.close()
-
-    text_result.delete("1.0", tk.END)
-
-    if result:
-        text_result.insert(
-            tk.END,
-            f"ID: {result[0]}\n"
-            f"დასახელება: {result[1]}\n"
-            f"კატეგორია: {result[2]}\n"
-            f"ფასი: {result[3]} ₾\n"
-            f"რაოდენობა: {result[4]}"
-        )
-    else:
-        text_result.insert(tk.END, "პროდუქტი ვერ მოიძებნა")
-
-def show_all_products():
-    listbox.delete(0, tk.END)
-
-    # სათაურები
-    header = (
-        f"{' ID | ':<5}"
-        f"{' დასახელება |':<20}"
-        f"{' კატეგორია |':<15}"
-        f"{' ფასი |':<10}"
-        f"{' რაოდენობა |':<10}"
-    )
-
-    listbox.insert(tk.END, header)
-    listbox.insert(tk.END, "-" * 60)
-
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM products")
-
-    for row in cursor.fetchall():
-        line = (
-            f"{str(row[0]):<5}"
-            f"{row[1]:<20}"
-            f"{row[2]:<15}"
-            f"{row[3]:<10}"
-            f"{row[4]:<10}"
-        )
-        listbox.insert(tk.END, line)
-
-    conn.close()
-
-def sell_product():
-    product_id = entry_sell_id.get()
-    sell_qty = entry_sell_qty.get()
-
-    if product_id == "" or sell_qty == "":
+    if not pid or not qty:
         messagebox.showerror("შეცდომა", "შეავსე ყველა ველი")
         return
 
     conn = connect_db()
-    cursor = conn.cursor()
+    cur = conn.cursor()
+    cur.execute("SELECT name, price, quantity FROM products WHERE id=?", (pid,))
+    p = cur.fetchone()
+    conn.close()
 
-    cursor.execute("SELECT price, quantity FROM products WHERE id = ?", (product_id,))
-    product = cursor.fetchone()
-
-    if not product:
-        messagebox.showerror("შეცდომა", "პროდუქტი არ მოიძებნა")
-        conn.close()
+    if not p:
+        messagebox.showerror("შეცდომა", "პროდუქტი ვერ მოიძებნა")
         return
 
-    price, available_qty = product
-    sell_qty = int(sell_qty)
+    name, price, stock = p
+    qty = int(qty)
 
-    if sell_qty > available_qty:
-        messagebox.showerror("შეცდომა", "არ არის საკმარისი რაოდენობა")
-        conn.close()
+    if qty > stock:
+        messagebox.showerror("შეცდომა", "მარაგი არასაკმარისია")
         return
 
-    total_price = price * sell_qty
-    sale_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cart.append((int(pid), name, price, qty))
+    
+    entry_sell_id.delete(0, tk.END)
+    entry_sell_qty.delete(0, tk.END)
+    
+    update_cart_display()
 
-    # 1) products quantity update
-    cursor.execute(
-        "UPDATE products SET quantity = quantity - ? WHERE id = ?",
-        (sell_qty, product_id)
+def update_cart_display():
+    cart_tree.delete(*cart_tree.get_children())
+    total = 0
+    
+    for i, (pid, name, price, qty) in enumerate(cart):
+        subtotal = price * qty
+        total += subtotal
+        cart_tree.insert("", tk.END, values=(i+1, name, qty, f"{price:.2f} ₾", f"{subtotal:.2f} ₾"))
+    
+    lbl_cart_total.config(text=f"სულ: {total:.2f} ₾")
+
+def remove_from_cart():
+    selected = cart_tree.selection()
+    if not selected:
+        messagebox.showwarning("გაფრთხილება", "აირჩიე პროდუქტი")
+        return
+    
+    item = cart_tree.item(selected[0])
+    index = int(item['values'][0]) - 1
+    
+    cart.pop(index)
+    update_cart_display()
+
+def clear_cart():
+    if not cart:
+        messagebox.showinfo("ინფორმაცია", "კალათა უკვე ცარიელია")
+        return
+    
+    confirm = messagebox.askyesno("დადასტურება", "დარწმუნებული ხარ რომ გსურს კალათის გასუფთავება?")
+    if confirm:
+        cart.clear()
+        update_cart_display()
+
+def complete_sale():
+    if not cart:
+        messagebox.showwarning("გაფრთხილება", "კალათა ცარიელია")
+        return
+
+    conn = connect_db()
+    cur = conn.cursor()
+    
+    try:
+        for pid, name, price, qty in cart:
+            cur.execute("UPDATE products SET quantity = quantity - ? WHERE id = ?", (qty, pid))
+            total = price * qty
+            cur.execute(
+                "INSERT INTO sales (product_id, quantity, total, date) VALUES (?, ?, ?, ?)",
+                (pid, qty, total, datetime.now().strftime("%Y-%m-%d %H:%M"))
+            )
+        
+        conn.commit()
+        messagebox.showinfo("წარმატება", "✓ გაიყიდა წარმატებით!")
+        
+        cart.clear()
+        update_cart_display()
+        
+    except Exception as e:
+        conn.rollback()
+        messagebox.showerror("შეცდომა", f"გაყიდვა ვერ მოხერხდა: {e}")
+    finally:
+        conn.close()
+
+# ---------------- TREEVIEW ----------------
+def clear_tree(columns):
+    tree.delete(*tree.get_children())
+    tree["columns"] = columns
+    for col in columns:
+        tree.heading(col, text=col)
+        tree.column(col, anchor="center", width=150)
+
+# ---------------- VIEW SWITCHERS ----------------
+def switch_sales_view(view):
+    sales_main.grid_remove()
+    sales_search.grid_remove()
+    view.grid()
+
+def switch_manage_view(view):
+    manage_products.grid_remove()
+    manage_sales.grid_remove()
+    manage_add.grid_remove()
+    product_actions.grid_remove()
+    view.grid(sticky="nsew")
+
+# ---------------- FUNCTIONS ----------------
+def search_product():
+    pid = entry_search_id.get()
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("SELECT name, price, quantity FROM products WHERE id=?", (pid,))
+    p = cur.fetchone()
+    conn.close()
+
+    if p:
+        lbl_search_result.config(
+            text=f"დასახელება: {p[0]}\nფასი: {p[1]} ₾\nმარაგი: {p[2]}"
+        )
+    else:
+        lbl_search_result.config(text="პროდუქტი ვერ მოიძებნა")
+
+def show_products():
+    switch_manage_view(manage_products)
+    clear_tree(("ID", "დასახელება", "ფასი", "მარაგი"))
+
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, price, quantity FROM products")
+
+    for r in cur.fetchall():
+        tree.insert("", tk.END, values=r)
+
+    conn.close()
+    product_actions.grid()
+
+def show_sales():
+    switch_manage_view(manage_sales)
+    clear_tree(("ID", "პროდუქტი", "რაოდენობა", "ჯამი ₾", "თარიღი"))
+
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT sales.id, products.name, sales.quantity, sales.total, sales.date
+        FROM sales JOIN products ON sales.product_id = products.id
+        ORDER BY sales.date DESC
+    """)
+
+    for r in cur.fetchall():
+        tree.insert("", tk.END, values=r)
+
+    conn.close()
+    product_actions.grid_remove()
+
+def add_product():
+    name = entry_name.get()
+    price = entry_price.get()
+    qty = entry_qty.get()
+
+    if not name or not price or not qty:
+        messagebox.showerror("შეცდომა", "შეავსე ყველა ველი")
+        return
+
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO products (name, price, quantity) VALUES (?, ?, ?)",
+        (name, float(price), int(qty))
     )
-
-    # 2) add to sales table
-    cursor.execute(
-        "INSERT INTO sales (product_id, quantity, total_price, sale_date) VALUES (?, ?, ?, ?)",
-        (product_id, sell_qty, total_price, sale_date)
-    )
-
     conn.commit()
     conn.close()
 
-    messagebox.showinfo("წარმატება", f"გაყიდვა შესრულდა: {total_price} ₾")
-    show_all_products()  # სია ავტომატურად განახლდება
+    entry_name.delete(0, tk.END)
+    entry_price.delete(0, tk.END)
+    entry_qty.delete(0, tk.END)
 
+    messagebox.showinfo("წარმატება", "პროდუქტი დაემატა")
+    show_products()
 
-# def show_all_products():
-#     listbox.delete(0, tk.END)
+def delete_product():
+    selected = tree.selection()
+    if not selected:
+        messagebox.showwarning("გაფრთხილება", "აირჩიე პროდუქტი")
+        return
+    
+    item = tree.item(selected[0])
+    product_id = item['values'][0]
+    product_name = item['values'][1]
+    
+    confirm = messagebox.askyesno("დადასტურება", 
+                                   f"დარწმუნებული ხარ რომ გსურს '{product_name}'-ის წაშლა?")
+    if confirm:
+        conn = connect_db()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM products WHERE id=?", (product_id,))
+        conn.commit()
+        conn.close()
+        
+        messagebox.showinfo("წარმატება", "პროდუქტი წაიშალა")
+        show_products()
 
-#     conn = connect_db()
-#     cursor = conn.cursor()
-#     cursor.execute("SELECT * FROM products")
+def edit_product():
+    selected = tree.selection()
+    if not selected:
+        messagebox.showwarning("გაფრთხილება", "აირჩიე პროდუქტი")
+        return
+    
+    item = tree.item(selected[0])
+    product_id = item['values'][0]
+    current_name = item['values'][1]
+    current_price = item['values'][2]
+    current_qty = item['values'][3]
+    
+    edit_window = tk.Toplevel(root)
+    edit_window.title("რედაქტირება")
+    edit_window.geometry("450x300")
+    edit_window.resizable(False, False)
+    edit_window.configure(bg="#f0f0f0")
+    
+    # ცენტრში განთავსება
+    frame = tk.Frame(edit_window, bg="#ffffff", relief="raised", borderwidth=2)
+    frame.pack(expand=True, fill="both", padx=20, pady=20)
+    
+    header = tk.Label(frame, text=f"პროდუქტის რედაქტირება (ID: {product_id})", 
+                     font=("Segoe UI", 14, "bold"), bg="#ffffff", fg="#2c3e50")
+    header.pack(pady=15)
+    
+    form_frame = tk.Frame(frame, bg="#ffffff")
+    form_frame.pack(pady=10)
+    
+    tk.Label(form_frame, text="დასახელება:", font=("Segoe UI", 10), 
+             bg="#ffffff", fg="#34495e").grid(row=0, column=0, sticky="e", padx=10, pady=8)
+    edit_name = tk.Entry(form_frame, width=25, font=("Segoe UI", 10), relief="solid", borderwidth=1)
+    edit_name.insert(0, current_name)
+    edit_name.grid(row=0, column=1, pady=8)
+    
+    tk.Label(form_frame, text="ფასი:", font=("Segoe UI", 10), 
+             bg="#ffffff", fg="#34495e").grid(row=1, column=0, sticky="e", padx=10, pady=8)
+    edit_price = tk.Entry(form_frame, width=25, font=("Segoe UI", 10), relief="solid", borderwidth=1)
+    edit_price.insert(0, current_price)
+    edit_price.grid(row=1, column=1, pady=8)
+    
+    tk.Label(form_frame, text="რაოდენობა:", font=("Segoe UI", 10), 
+             bg="#ffffff", fg="#34495e").grid(row=2, column=0, sticky="e", padx=10, pady=8)
+    edit_qty = tk.Entry(form_frame, width=25, font=("Segoe UI", 10), relief="solid", borderwidth=1)
+    edit_qty.insert(0, current_qty)
+    edit_qty.grid(row=2, column=1, pady=8)
+    
+    def save_changes():
+        new_name = edit_name.get()
+        new_price = edit_price.get()
+        new_qty = edit_qty.get()
+        
+        if not new_name or not new_price or not new_qty:
+            messagebox.showerror("შეცდომა", "შეავსე ყველა ველი")
+            return
+        
+        try:
+            conn = connect_db()
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE products SET name=?, price=?, quantity=? WHERE id=?",
+                (new_name, float(new_price), int(new_qty), product_id)
+            )
+            conn.commit()
+            conn.close()
+            
+            messagebox.showinfo("წარმატება", "პროდუქტი განახლდა")
+            edit_window.destroy()
+            show_products()
+        except ValueError:
+            messagebox.showerror("შეცდომა", "არასწორი ფორმატი")
+    
+    btn_frame = tk.Frame(frame, bg="#ffffff")
+    btn_frame.pack(pady=20)
+    
+    save_btn = tk.Button(btn_frame, text="შენახვა", command=save_changes, 
+                         bg="#27ae60", fg="white", font=("Segoe UI", 10, "bold"),
+                         width=12, height=1, relief="flat", cursor="hand2")
+    save_btn.pack(side="left", padx=5)
+    
+    cancel_btn = tk.Button(btn_frame, text="გაუქმება", command=edit_window.destroy,
+                           bg="#95a5a6", fg="white", font=("Segoe UI", 10, "bold"),
+                           width=12, height=1, relief="flat", cursor="hand2")
+    cancel_btn.pack(side="left", padx=5)
 
-#     for row in cursor.fetchall():
-#         listbox.insert(
-#             tk.END,
-#             f"ID:{row[0]} | {row[1]} | {row[2]} | {row[3]} ₾ | რაოდენობა: {row[4]}"
-#         )
-
-#     conn.close()
-
-# ---------- GUI ----------
+# ---------------- GUI ----------------
 root = tk.Tk()
-root.title("სუპერმარკეტის მართვის სისტემა")
-root.geometry("650x500")
+root.title("🛒 Supermarket System")
+root.geometry("1100x700")
+root.configure(bg="#ecf0f1")
+
+# სტილები
+style = ttk.Style()
+style.theme_use('clam')
+
+# Notebook სტილი
+style.configure("TNotebook", background="#ecf0f1", borderwidth=0)
+style.configure("TNotebook.Tab", 
+                background="#bdc3c7", 
+                foreground="#2c3e50",
+                padding=[20, 10],
+                font=("Segoe UI", 11, "bold"))
+style.map("TNotebook.Tab",
+          background=[("selected", "#3498db")],
+          foreground=[("selected", "white")])
+
+# Frame სტილები
+style.configure("TFrame", background="#ecf0f1")
+style.configure("TLabelframe", background="#ffffff", relief="raised")
+style.configure("TLabelframe.Label", 
+                background="#ffffff", 
+                foreground="#2c3e50",
+                font=("Segoe UI", 11, "bold"))
+
+# Button სტილები
+style.configure("TButton",
+                background="#3498db",
+                foreground="white",
+                borderwidth=0,
+                focuscolor="none",
+                font=("Segoe UI", 10, "bold"),
+                padding=[15, 8])
+style.map("TButton",
+          background=[("active", "#2980b9")])
+
+# Accent Button
+style.configure("Accent.TButton",
+                background="#27ae60",
+                foreground="white",
+                font=("Segoe UI", 11, "bold"),
+                padding=[20, 10])
+style.map("Accent.TButton",
+          background=[("active", "#229954")])
+
+# Delete Button
+style.configure("Delete.TButton",
+                background="#e74c3c",
+                foreground="white",
+                font=("Segoe UI", 10, "bold"))
+style.map("Delete.TButton",
+          background=[("active", "#c0392b")])
+
+# Edit Button
+style.configure("Edit.TButton",
+                background="#f39c12",
+                foreground="white",
+                font=("Segoe UI", 10, "bold"))
+style.map("Edit.TButton",
+          background=[("active", "#e67e22")])
+
+# Label სტილები
+style.configure("TLabel",
+                background="#ffffff",
+                foreground="#34495e",
+                font=("Segoe UI", 10))
+
+style.configure("Header.TLabel",
+                font=("Segoe UI", 16, "bold"),
+                foreground="#2c3e50")
+
+# Entry სტილები
+style.configure("TEntry",
+                fieldbackground="white",
+                borderwidth=1,
+                relief="solid")
+
+# Treeview სტილები
+style.configure("Treeview",
+                background="white",
+                foreground="#2c3e50",
+                rowheight=30,
+                fieldbackground="white",
+                font=("Segoe UI", 10))
+style.configure("Treeview.Heading",
+                background="#34495e",
+                foreground="white",
+                font=("Segoe UI", 11, "bold"),
+                relief="flat")
+style.map("Treeview",
+          background=[("selected", "#3498db")])
 
 notebook = ttk.Notebook(root)
-notebook.pack(expand=True, fill="both")
+notebook.pack(expand=True, fill="both", padx=10, pady=10)
 
+# ================= SALES TAB =================
+tab_sales = ttk.Frame(notebook)
+notebook.add(tab_sales, text="📊 სარეალიზაციო")
 
+sales_top = ttk.Frame(tab_sales)
+sales_top.grid(row=0, column=0, padx=15, pady=10, sticky="w")
 
-# ---------- TAB 1: ALL PRODUCTS ----------
-tab_all = ttk.Frame(notebook)
-notebook.add(tab_all, text="ყველა პროდუქტი")
+ttk.Button(sales_top, text="მთავარი",
+           command=lambda: switch_sales_view(sales_main)).grid(row=0, column=0, padx=5)
+ttk.Button(sales_top, text="პროდუქტის ძიება",
+           command=lambda: switch_sales_view(sales_search)).grid(row=0, column=1, padx=5)
 
-# ttk.Button(tab_all, text="განახლება", command=show_all_products).pack(pady=5)
+sales_main = ttk.Frame(tab_sales)
+sales_main.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
 
-listbox = tk.Listbox(tab_all, width=90)
-listbox.pack(pady=10)
-show_all_products()
+tab_sales.rowconfigure(1, weight=1)
+tab_sales.columnconfigure(0, weight=1)
 
+# ზედა ნაწილი - დამატება და ჯამი
+top_container = ttk.Frame(sales_main)
+top_container.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+top_container.columnconfigure(0, weight=1)
+top_container.columnconfigure(1, weight=0)
+top_container.rowconfigure(0, weight=1)
 
-# ---------- TAB 2: ADD PRODUCT ----------
-tab_add = ttk.Frame(notebook)
-notebook.add(tab_add, text="პროდუქტის დამატება")
+# პროდუქტის დამატება
+add_frame = ttk.LabelFrame(top_container, text="🛍️ პროდუქტის დამატება", padding=15)
+add_frame.grid(row=0, column=0, padx=(0, 10), sticky="nsew")
 
-ttk.Label(tab_add, text="დასახელება").pack(pady=2)
-entry_name = ttk.Entry(tab_add)
-entry_name.pack()
+ttk.Label(add_frame, text="პროდუქტის ID:").grid(row=0, column=0, padx=5, pady=8, sticky="w")
+entry_sell_id = ttk.Entry(add_frame, width=25, font=("Segoe UI", 10))
+entry_sell_id.grid(row=0, column=1, padx=5, pady=8)
 
-ttk.Label(tab_add, text="კატეგორია").pack(pady=2)
-entry_category = ttk.Entry(tab_add)
-entry_category.pack()
+ttk.Label(add_frame, text="რაოდენობა:").grid(row=1, column=0, padx=5, pady=8, sticky="w")
+entry_sell_qty = ttk.Entry(add_frame, width=25, font=("Segoe UI", 10))
+entry_sell_qty.grid(row=1, column=1, padx=5, pady=8)
 
-ttk.Label(tab_add, text="ფასი").pack(pady=2)
-entry_price = ttk.Entry(tab_add)
-entry_price.pack()
+ttk.Button(add_frame, text="➕ კალათში დამატება", command=add_to_cart)\
+    .grid(row=2, column=0, columnspan=2, pady=15)
 
-ttk.Label(tab_add, text="რაოდენობა").pack(pady=2)
-entry_quantity = ttk.Entry(tab_add)
-entry_quantity.pack()
+# სულ ჯამი
+total_frame = ttk.LabelFrame(top_container, text="💰 სულ ჯამი", padding=15)
+total_frame.grid(row=0, column=1, sticky="nsew")
 
-ttk.Button(tab_add, text="დამატება", command=add_product).pack(pady=10)
+lbl_cart_total = ttk.Label(total_frame, text="0.00 ₾", 
+                           font=("Segoe UI", 24, "bold"), 
+                           foreground="#27ae60")
+lbl_cart_total.pack(pady=(10, 15), padx=30)
 
-# ---------- TAB 3: SEARCH BY ID ----------
-tab_search = ttk.Frame(notebook)
-notebook.add(tab_search, text="პროდუქტის ნახვა ID-ით")
+ttk.Button(total_frame, text="✓ გაყიდვა", command=complete_sale, style="Accent.TButton")\
+    .pack(pady=5, padx=20, fill="x")
 
-ttk.Label(tab_search, text="პროდუქტის ID").pack(pady=5)
-entry_search_id = ttk.Entry(tab_search)
-entry_search_id.pack()
+ttk.Button(total_frame, text="🗑️ ამოღება კალათიდან", command=remove_from_cart, style="Delete.TButton")\
+    .pack(pady=5, padx=20, fill="x")
 
-ttk.Button(tab_search, text="ძებნა", command=get_product_by_id).pack(pady=5)
+ttk.Button(total_frame, text="🧹 კალათის გასუფთავება", command=clear_cart, style="Delete.TButton")\
+    .pack(pady=5, padx=20, fill="x")
 
-text_result = tk.Text(tab_search, height=8, width=50)
-text_result.pack(pady=10)
+# კალათა
+cart_frame = ttk.LabelFrame(sales_main, text="🛒 კალათა", padding=15)
+cart_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
 
-# ---------- TAB 4: SELL PRODUCT ----------
-tab_sell = ttk.Frame(notebook)
-notebook.add(tab_sell, text="გაყიდვა")
+sales_main.rowconfigure(1, weight=1)
+sales_main.columnconfigure(0, weight=1)
 
-ttk.Label(tab_sell, text="პროდუქტის ID").pack(pady=2)
-entry_sell_id = ttk.Entry(tab_sell)
-entry_sell_id.pack()
+cart_tree = ttk.Treeview(cart_frame, columns=("N", "დასახელება", "რაოდ.", "ფასი", "ჯამი"), 
+                         show="headings", height=12)
+cart_tree.heading("N", text="N")
+cart_tree.heading("დასახელება", text="დასახელება")
+cart_tree.heading("რაოდ.", text="რაოდ.")
+cart_tree.heading("ფასი", text="ფასი")
+cart_tree.heading("ჯამი", text="ჯამი")
 
-ttk.Label(tab_sell, text="რაოდენობა").pack(pady=2)
-entry_sell_qty = ttk.Entry(tab_sell)
-entry_sell_qty.pack()
+cart_tree.column("N", width=50, anchor="center")
+cart_tree.column("დასახელება", width=250)
+cart_tree.column("რაოდ.", width=100, anchor="center")
+cart_tree.column("ფასი", width=120, anchor="e")
+cart_tree.column("ჯამი", width=120, anchor="e")
 
-ttk.Button(tab_sell, text="გაყიდვა", command=sell_product).pack(pady=10)
+cart_tree.pack(fill="both", expand=True, pady=(0, 10))
 
+# პროდუქტის ძიება
+sales_search = ttk.Frame(tab_sales)
+sales_search_inner = ttk.LabelFrame(sales_search, text="🔍 პროდუქტის ძიება", padding=30)
+sales_search_inner.pack(padx=50, pady=50)
+
+ttk.Label(sales_search_inner, text="პროდუქტის ID:").grid(row=0, column=0, padx=10, pady=10)
+entry_search_id = ttk.Entry(sales_search_inner, width=30, font=("Segoe UI", 10))
+entry_search_id.grid(row=0, column=1, padx=10, pady=10)
+
+ttk.Button(sales_search_inner, text="🔍 ძებნა", command=search_product)\
+    .grid(row=1, column=0, columnspan=2, pady=15)
+
+lbl_search_result = ttk.Label(sales_search_inner, font=("Segoe UI", 11))
+lbl_search_result.grid(row=2, column=0, columnspan=2, pady=15)
+
+# ================= MANAGEMENT TAB =================
+tab_manage = ttk.Frame(notebook)
+notebook.add(tab_manage, text="⚙️ მენეჯმენტი")
+
+tab_manage.rowconfigure(1, weight=1)
+tab_manage.columnconfigure(0, weight=1)
+
+manage_top = ttk.Frame(tab_manage)
+manage_top.grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+ttk.Button(manage_top, text="📦 ყველა პროდუქტი", command=show_products).grid(row=0, column=0, padx=5)
+ttk.Button(manage_top, text="💰 გაყიდვები", command=show_sales).grid(row=0, column=1, padx=5)
+ttk.Button(manage_top, text="➕ ახალი პროდუქტი",
+           command=lambda: switch_manage_view(manage_add)).grid(row=0, column=2, padx=5)
+
+product_actions = ttk.Frame(manage_top)
+product_actions.grid(row=0, column=3, padx=20)
+
+ttk.Button(product_actions, text="✏️ რედაქტირება", command=edit_product, style="Edit.TButton").pack(side="left", padx=5)
+ttk.Button(product_actions, text="🗑️ წაშლა", command=delete_product, style="Delete.TButton").pack(side="left", padx=5)
+product_actions.grid_remove()
+
+# PRODUCTS VIEW
+manage_products = ttk.Frame(tab_manage)
+manage_products.grid(row=1, column=0, sticky="nsew", padx=15, pady=10)
+
+tree = ttk.Treeview(manage_products, show="headings")
+tree.pack(expand=True, fill="both")
+
+scroll = ttk.Scrollbar(manage_products, orient="vertical", command=tree.yview)
+scroll.pack(side="right", fill="y")
+tree.configure(yscrollcommand=scroll.set)
+
+# SALES VIEW
+manage_sales = manage_products
+
+# ADD PRODUCT VIEW
+manage_add = ttk.Frame(tab_manage)
+manage_add.columnconfigure(0, weight=1)
+manage_add.rowconfigure(0, weight=1)
+
+add_box = ttk.LabelFrame(manage_add, text="➕ ახალი პროდუქტის დამატება", padding=30)
+add_box.grid(row=0, column=0)
+
+ttk.Label(add_box, text="დასახელება:", font=("Segoe UI", 10)).grid(row=0, column=0, pady=10, sticky="e", padx=10)
+entry_name = ttk.Entry(add_box, width=35, font=("Segoe UI", 10))
+entry_name.grid(row=0, column=1, pady=10)
+
+ttk.Label(add_box, text="ფასი:", font=("Segoe UI", 10)).grid(row=1, column=0, pady=10, sticky="e", padx=10)
+entry_price = ttk.Entry(add_box, width=35, font=("Segoe UI", 10))
+entry_price.grid(row=1, column=1, pady=10)
+
+ttk.Label(add_box, text="რაოდენობა:", font=("Segoe UI", 10)).grid(row=2, column=0, pady=10, sticky="e", padx=10)
+entry_qty = ttk.Entry(add_box, width=35, font=("Segoe UI", 10))
+entry_qty.grid(row=2, column=1, pady=10)
+
+ttk.Button(add_box, text="✓ დამატება", command=add_product, style="Accent.TButton")\
+    .grid(row=3, column=0, columnspan=2, pady=20)
+
+show_products()
 
 root.mainloop()
